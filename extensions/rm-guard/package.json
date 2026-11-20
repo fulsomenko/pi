@@ -1,0 +1,11 @@
+{
+  "name": "rm-guard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gate destructive bash commands (rm and same-weight) behind a yes/no confirm before pi runs them.",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
