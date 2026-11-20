@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+# local, per-machine pi config (keep source-of-truth in extensions/)
+.pi/settings.json
+# Nix build artifact: the `result` symlink for flake outputs
+/result
