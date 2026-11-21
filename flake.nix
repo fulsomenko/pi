@@ -22,9 +22,12 @@
 
       # NixOS module that points pi at a custom model endpoint (Ollama, LM
       # Studio, vLLM, ...) by installing a models.json into the user's agent
-      # directory. Consume with:  imports = [ inputs.pi.nixosModules.agent ];
-      # and set pi.agent.enable + pi.agent.baseUrl + pi.agent.models.
-      nixosModules.agent = final: _inputs: import ./modules/agent.nix;
+      # directory. It is a plain NixOS module function (one args parameter,
+      # returning {options, config}), so on the consumer side:
+      #   imports = [ inputs.pi.nixosModules.agent ];
+      # then set pi.agent.enable + pi.agent.user + pi.agent.baseUrl
+      # + pi.agent.models.
+      nixosModules.agent = import ./modules/agent.nix;
 
       # Authoring note (README.md has more):
       #   - pi loads .ts extensions at runtime via jiti -> NO build step needed.

@@ -10,10 +10,19 @@
 #           pi.agent.api
 #           pi.agent.apiKey
 #           pi.agent.models
-{ config, lib, pkgs, users, ... }:
+#
+# Only standard NixOS specialArgs (config/lib/pkgs) are used: a NixOS module
+# is applied exactly once (lib/modules.nix loadModule/applyModuleArgs) and
+# must return a top-level { options, config } attrset. The user's home dir
+# is looked up through the users option, not a specialArg.
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.pi.agent;
+
+  # Lazy by design: only forced when the activation script is produced
+  # (pi.agent.enable = true with a valid pi.agent.user).
+  home = config.users.users.${cfg.user}.home;
 
   modelToJson = m:
     { id = m.id; }
@@ -83,18 +92,18 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.user != "";
-        message = "pi.agent.user must be set to an existing users.users entry";
+        assertion = cfg.user != "" && config.users.users ? ${cfg.user};
+        message = "pi.agent.user must name an existing users.users entry (got '${cfg.user}')";
       }
     ];
 
     # models.json must live in the user's agent directory; symlink + chown it
     # during activation (the same pattern used for other per-home agent config).
     system.activationScripts.piAgent = ''
-      mkdir -p "${users.users.${cfg.user}.home}/.pi/agent"
-      chown ${cfg.user} "${users.users.${cfg.user}.home}/.pi/agent"
-      ln -sf ${modelsJson} "${users.users.${cfg.user}.home}/.pi/agent/models.json"
-      chown -h ${cfg.user} "${users.users.${cfg.user}.home}/.pi/agent/models.json"
+      mkdir -p "${home}/.pi/agent"
+      chown ${cfg.user} "${home}/.pi/agent"
+      ln -sf ${modelsJson} "${home}/.pi/agent/models.json"
+      chown -h ${cfg.user} "${home}/.pi/agent/models.json"
     '';
   };
 }
