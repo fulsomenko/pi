@@ -73,13 +73,37 @@ in
       description = "Literal key, $NAME env interpolation, or !command. Ollama accepts a dummy value.";
     };
 
+    # A list of model records. `attrsOf` does not work here -- it types the
+    # _values of a map_, not a fixed field set -- so each entry is a
+    # submodule with the fields the pi models.json schema accepts.
     models = lib.mkOption {
-      type = lib.types.listOf (lib.types.attrsOf {
-        id = lib.types.str;
-        name = lib.types.nullOr lib.types.str;
-        contextWindow = lib.types.nullOr lib.types.int;
-        maxTokens = lib.types.nullOr lib.types.int;
-        reasoning = lib.types.nullOr lib.types.bool;
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          id = lib.mkOption {
+            type = lib.types.str;
+            description = "Model id served by the endpoint, e.g. qwen3-coder:30b.";
+          };
+          name = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Optional display name.";
+          };
+          contextWindow = lib.mkOption {
+            type = lib.types.nullOr lib.types.int;
+            default = null;
+            description = "Optional context window size (pi defaults to 128000).";
+          };
+          maxTokens = lib.mkOption {
+            type = lib.types.nullOr lib.types.int;
+            default = null;
+            description = "Optional max output tokens (pi defaults to 16384).";
+          };
+          reasoning = lib.mkOption {
+            type = lib.types.nullOr lib.types.bool;
+            default = null;
+            description = "Optional reasoning flag (pi defaults to false).";
+          };
+        };
       });
       default = [ ];
       example = [
