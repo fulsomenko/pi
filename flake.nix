@@ -20,6 +20,12 @@
         pi = piPkg;
       };
 
+      # NixOS module that points pi at a custom model endpoint (Ollama, LM
+      # Studio, vLLM, ...) by installing a models.json into the user's agent
+      # directory. Consume with:  imports = [ inputs.pi.nixosModules.agent ];
+      # and set pi.agent.enable + pi.agent.baseUrl + pi.agent.models.
+      nixosModules.agent = final: _inputs: import ./modules/agent.nix;
+
       # Authoring note (README.md has more):
       #   - pi loads .ts extensions at runtime via jiti -> NO build step needed.
       #   - run/author with:  nix run .#pi -- <args>
