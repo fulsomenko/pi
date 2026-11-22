@@ -14,6 +14,8 @@
 #           pi.agent.api
 #           pi.agent.apiKey
 #           pi.agent.models
+#           pi.agent.sendSessionAffinityHeaders
+#           pi.agent.sessionAffinityFormat
 #           pi.agent.mcpServers
 #
 # Only standard NixOS specialArgs (config/lib/pkgs) are used: a NixOS module
@@ -35,13 +37,26 @@ let
   scalar = lib.types.oneOf [ lib.types.str lib.types.int lib.types.float lib.types.bool ];
   samplingValue = lib.types.oneOf [ scalar (lib.types.attrsOf scalar) (lib.types.listOf scalar) ];
 
+  # Optionally tag every request with pi's own session ID. pi models.json
+  # (docs/models-configuration.md) exposes this as a per-model `compat` object:
+  #   sendSessionAffinityHeaders : whether to emit a session-affinity header
+  #   sessionAffinityFormat      : "openrouter" sends `x-session-id` (the header
+  #                                the scribe proxy reads to classify pi's
+  #                                transcripts); "openai" sends `session_id`,
+  #                                `x-client-request-id`, `x-session-affinity`.
+  # We apply the same value to every model so dotfiles can flip one provider-
+  # level toggle instead of repeating the block per model.
   modelToJson = m:
     { id = m.id; }
     // lib.optionalAttrs (m.name != null) { name = m.name; }
     // lib.optionalAttrs (m.contextWindow != null) { contextWindow = m.contextWindow; }
     // lib.optionalAttrs (m.maxTokens != null) { maxTokens = m.maxTokens; }
     // lib.optionalAttrs (m.reasoning != null) { reasoning = m.reasoning; }
-    // lib.optionalAttrs (m.samplingParams != { }) { samplingParams = m.samplingParams; };
+    // lib.optionalAttrs (m.samplingParams != { }) { samplingParams = m.samplingParams; }
+    // lib.optionalAttrs cfg.sendSessionAffinityHeaders ({ compat = {
+         sendSessionAffinityHeaders = true;
+         sessionAffinityFormat = cfg.sessionAffinityFormat;
+       }; });
 
   hasModels = cfg.models != [ ];
   # Plain store path (no lib.mkIf): it is interpolated into the activation
@@ -96,6 +111,22 @@ in
       type = lib.types.str;
       default = "ollama";
       description = "Provider key under models.json's providers table.";
+    };
+
+    # Tell pi to tag every request with its own session ID as a header (pi
+    # models-configuration.md: per-model compat.sendSessionAffinityHeaders +
+    # compat.sessionAffinityFormat). This is what the scribe proxy classifies
+    # pi's transcripts by: the proxy reads the `x-session-id` request header.
+    sendSessionAffinityHeaders = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Send pi's own session ID on every model request, so the scribe proxy can classify transcripts per session (compat.sendSessionAffinityHeaders = true).";
+    };
+
+    sessionAffinityFormat = lib.mkOption {
+      type = lib.types.enum [ "openai" "openai-nosession" "openrouter" ];
+      default = "openrouter";
+      description = "Session-affinity header format (compat.sessionAffinityFormat). \"openrouter\" emits x-session-id -- the header the scribe proxy reads; the other formats emit different headers.";
     };
 
     baseUrl = lib.mkOption {
