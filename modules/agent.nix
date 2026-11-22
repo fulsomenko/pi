@@ -53,6 +53,7 @@ let
     // lib.optionalAttrs (m.contextWindow != null) { contextWindow = m.contextWindow; }
     // lib.optionalAttrs (m.maxTokens != null) { maxTokens = m.maxTokens; }
     // lib.optionalAttrs (m.reasoning != null) { reasoning = m.reasoning; }
+    // lib.optionalAttrs (m.thinkingLevelMap != { }) { thinkingLevelMap = m.thinkingLevelMap; }
     // lib.optionalAttrs (m.samplingParams != { }) { samplingParams = m.samplingParams; }
     // lib.optionalAttrs cfg.sendSessionAffinityHeaders ({ compat = {
          sendSessionAffinityHeaders = true;
@@ -202,7 +203,12 @@ in
           reasoning = lib.mkOption {
             type = lib.types.nullOr lib.types.bool;
             default = null;
-            description = "Optional reasoning flag (pi defaults to false).";
+            description = "Optional reasoning flag (pi defaults to false); enables pi's /thinking levels for the model.";
+          };
+          thinkingLevelMap = lib.mkOption {
+            type = lib.types.attrsOf (lib.types.nullOr lib.types.str);
+            default = { };
+            description = "Optional mapping from pi thinking levels (off/minimal/low/medium/high) to the value sent to the endpoint per level (pi: thinkingLevelMap); null marks a level unsupported. Needed when the endpoint accepts only a subset of level names, e.g. { off = \"none\"; high = \"xhigh\"; } for Ollama, which understands none/low/medium/xhigh.";
           };
           samplingParams = lib.mkOption {
             type = lib.types.attrsOf samplingValue;
