@@ -120,10 +120,22 @@ let
   hasPrompts = cfg.prompts != { };
   # A store *directory* whose direct children are the template files. Pi loads
   # direct `.md` children of the prompts dir (docs/prompt-templates.md), so the
-  # files must sit at the top level, not nested.
-  promptsDir = pkgs.writeTextDir "pi-prompts" (
-    lib.mapAttrs' (name: p: lib.nameValuePair "${name}.md" (promptToMarkdown p)) cfg.prompts
-  );
+  # files must sit at the top level, not nested. Strategy: render each template
+  # to its own store file (writeText), then copy them into one directory.
+  # (writeTextDir / symlinkJoin are not reliable for a flat set of bare files:
+  # symlinkJoin wants directory inputs, and plain writeTextDir isn't present in
+  # all nixpkgs.) stdenv guarantees `mkdir`/`cp` in the builder.
+  promptFiles = lib.mapAttrs (name: p: pkgs.writeText "${name}.md" (promptToMarkdown p)) cfg.prompts;
+  promptsDir = pkgs.stdenv.mkDerivation {
+    pname = "pi-prompts";
+    version = "1";
+    dontUnpack = true;
+    dontBuild = true;
+    installPhase = ''
+      mkdir -p $out
+      ${builtins.concatStringsSep "\n" (lib.map (n: "cp -L ${promptFiles.${n}} $out/${n}.md") (builtins.attrNames cfg.prompts))}
+    '';
+  };
 in
 {
   options.pi.agent = {

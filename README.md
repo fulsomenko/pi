@@ -12,6 +12,16 @@ build your own.
 - **`hello/`** — demo: a `/hello` command, a `greet` tool, a `session_start` notice. Proof that a local `.ts` extension loads.
 - **`rm-guard/`** — before pi runs a **destructive** bash command (`rm` and same-weight: `git reset --hard`, `git push --force`, `git clean -f`, `find -delete`, `dd`, `mv -f`, `chmod`/`chown -R`, `truncate -s0`, raw-disk redirects), it pauses for a **yes/no** confirm; `no` blocks the call. Always asks (no allow-list). Scope + rules live in `rm-guard/src/index.ts`.
 
+> **Prompt-shorthand commands are not extensions.** `/card`, `/planning`,
+> `/investigate`, and `/worktree` are pi **prompt templates** (a markdown file:
+> frontmatter + a body that pi expands against your arguments and *submits to
+> the model*). An extension that only `ctx.ui.notify()`s just prints to the UI
+> and never reaches the model — that's why those four were templates, not
+> `.ts`. They are Nix-managed: the mechanism is the `pi.agent.prompts` option
+> in `modules/agent.nix` (installed to `~/.pi/agent/prompts/<name>.md`), and
+> the actual commands are configured per-machine in the dotfiles
+> (`a-smol-workstation/workstation-specific.nix`).
+
 ## Layout
 
 ```
