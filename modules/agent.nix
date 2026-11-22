@@ -14,6 +14,7 @@
 #           pi.agent.api
 #           pi.agent.apiKey
 #           pi.agent.models
+#           pi.agent.prompts
 #           pi.agent.sendSessionAffinityHeaders
 #           pi.agent.sessionAffinityFormat
 #           pi.agent.mcpServers
@@ -96,6 +97,32 @@ let
   mcpJson = pkgs.writeText "pi-mcp.json" (builtins.toJSON {
     mcpServers = lib.mapAttrs (name: server: serverToJson server) cfg.mcpServers;
   });
+
+  # Prompt templates: turn each `pi.agent.prompts.<name>` entry into a
+  # `<agent-dir>/prompts/<name>.md` file, which pi auto-discovers and exposes
+  # as a `/name` slash command (docs/prompt-templates.md). The file is classic
+  # frontmatter + body:
+  #   ---
+  #   description: ...
+  #   argument-hint: ...
+  #   ---
+  #   <body with $1 / $@ / $ARGUMENTS substitutions>
+  # `argument-hint` is always double-quoted: a hint like `[focus]` would
+  # otherwise be parsed by YAML as a list rather than the literal string.
+  yamlStr = s: builtins.replaceStrings [ "\"" ] [ "\\\"" ] (lib.removeSuffix "\n" s);
+  promptToMarkdown = p: "---\n"
+    + (lib.optionalString (p.description != "") "description: \"${yamlStr p.description}\"\n")
+    + (lib.optionalString (p.argumentHint != null) "argument-hint: \"${yamlStr p.argumentHint}\"\n")
+    + "---\n"
+    + p.body;
+
+  hasPrompts = cfg.prompts != { };
+  # A store *directory* whose direct children are the template files. Pi loads
+  # direct `.md` children of the prompts dir (docs/prompt-templates.md), so the
+  # files must sit at the top level, not nested.
+  promptsDir = pkgs.writeTextDir "pi-prompts" (
+    lib.mapAttrs' (name: p: lib.nameValuePair "${name}.md" (promptToMarkdown p)) cfg.prompts
+  );
 in
 {
   options.pi.agent = {
@@ -190,6 +217,47 @@ in
         { id = "qwen3.8:27b-128k"; contextWindow = 131072; samplingParams.reasoning_effort = "low"; }
       ];
       description = "Models the endpoint exposes. Entries not set are omitted (pi applies schema defaults).";
+    };
+
+    # Prompt templates -> ~/.pi/agent/prompts/<name>.md (pi docs/prompt-templates.md).
+    # Each entry becomes a `/name` slash command: pi auto-discovers the .md file,
+    # expands the body against the arguments the user typed, and submits the
+    # result to the model. This is the mechanism for /card, /planning,
+    # /investigate, /worktree -- "prompt shorthand" commands in the style of
+    # qwen/codex command .md files, with no executable behaviour.
+    #
+    # Substitutions available in `body` (docs/prompt-templates.md): $1, $2, ...
+    # (positional args), $@ / $ARGUMENTS (all args). NOTE: author bodies with
+    # only the braceless forms -- ${1:-default} / ${@:N} are written by pi, not
+    # here, and a Nix `''...''` string would try to interpolate them.
+    prompts = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          description = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "Shown in command completion. If empty, pi uses the first non-empty line of the body.";
+          };
+          argumentHint = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Optional usage hint, e.g. \"<ticket | pr>\". Angle brackets = required, square brackets = optional. Omitted when null.";
+          };
+          body = lib.mkOption {
+            type = lib.types.str;
+            description = "The prompt text. $1/$2/$@/$ARGUMENTS are substituted with the user's arguments before the text is submitted.";
+          };
+        };
+      });
+      default = { };
+      example = {
+        card = {
+          description = "Plan a pickupable task card";
+          argumentHint = "<outcome-oriented title>";
+          body = "Produce a pickupable task card for: $ARGUMENTS";
+        };
+      };
+      description = "Prompt templates installed into the user's pi agent directory; each key becomes a / slash command.";
     };
 
     # User-level MCP servers -> ~/.pi/agent/mcp.json (pi docs/mcp.md).
@@ -298,7 +366,7 @@ in
     # during activation (the same pattern used for other per-home agent
     # config). Each file is only touched if its data is actually configured.
     system.activationScripts.piAgent = ''
-      ${lib.optionalString (hasModels || hasMcp) ''
+      ${lib.optionalString (hasModels || hasMcp || hasPrompts) ''
         mkdir -p "${home}/.pi/agent"
         chown ${cfg.user} "${home}/.pi/agent"
       ''}
@@ -309,6 +377,12 @@ in
       ${lib.optionalString hasMcp ''
         ln -sf ${mcpJson} "${home}/.pi/agent/mcp.json"
         chown -h ${cfg.user} "${home}/.pi/agent/mcp.json"
+      ''}
+      ${lib.optionalString hasPrompts ''
+        # -n: prompts is a *directory* symlink; treat any existing symlink-to-dir
+        # as a file so relinking replaces rather than nests inside it.
+        ln -sfn ${promptsDir} "${home}/.pi/agent/prompts"
+        chown -h ${cfg.user} "${home}/.pi/agent/prompts"
       ''}
     '';
   };
