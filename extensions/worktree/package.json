@@ -1,0 +1,19 @@
+{
+  "name": "pi-worktree",
+  "version": "1.0.0",
+  "description": "Worktree command for pi coding agent",
+  "main": "src/index.ts",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "command",
+    "worktree",
+    "git"
+  ],
+  "author": "Max Fulsom <max@fulsomenko.com>",
+  "license": "MIT"
+}

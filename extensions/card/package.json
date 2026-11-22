@@ -1,0 +1,20 @@
+{
+  "name": "pi-card",
+  "version": "1.0.0",
+  "description": "Card command for pi coding agent",
+  "main": "src/index.ts",
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "command",
+    "card",
+    "kanban",
+    "planning"
+  ],
+  "author": "Max Fulsom <max@fulsomenko.com>",
+  "license": "MIT"
+}
