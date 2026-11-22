@@ -1,7 +1,11 @@
-# Purpose: point pi (the coding agent) at a custom model endpoint (Ollama, LM Studio,
-#          vLLM, ...) by installing a models.json into the pi agent directory
-#          (~/.pi/agent on the given user). See pi docs/models.md, "Configure a
-#          compatible endpoint" and docs/configuration.md, "Agent directory".
+# Purpose: configure pi (the coding agent) for a user by installing files into
+#          the pi agent directory (~/.pi/agent on the given user):
+#           - models.json: point pi at a custom model endpoint (Ollama, LM
+#             Studio, vLLM, ...). See pi docs/models.md, "Configure a
+#             compatible endpoint".
+#           - mcp.json: user-level MCP servers. See pi docs/mcp.md, "Configure
+#             servers".
+#          (plus docs/configuration.md, "Agent directory")
 # Platform: NixOS
 # Options:  pi.agent.enable
 #           pi.agent.user
@@ -10,6 +14,7 @@
 #           pi.agent.api
 #           pi.agent.apiKey
 #           pi.agent.models
+#           pi.agent.mcpServers
 #
 # Only standard NixOS specialArgs (config/lib/pkgs) are used: a NixOS module
 # is applied exactly once (lib/modules.nix loadModule/applyModuleArgs) and
@@ -24,13 +29,25 @@ let
   # (pi.agent.enable = true with a valid pi.agent.user).
   home = config.users.users.${cfg.user}.home;
 
+  # Free-form value a sampling param may take. pi's models.json `samplingParams`
+  # is a free-form object merged into every request body, so any JSON value must
+  # be typable: scalars, one level of attrs, or a list of scalars.
+  scalar = lib.types.oneOf [ lib.types.str lib.types.int lib.types.float lib.types.bool ];
+  samplingValue = lib.types.oneOf [ scalar (lib.types.attrsOf scalar) (lib.types.listOf scalar) ];
+
   modelToJson = m:
     { id = m.id; }
     // lib.optionalAttrs (m.name != null) { name = m.name; }
     // lib.optionalAttrs (m.contextWindow != null) { contextWindow = m.contextWindow; }
     // lib.optionalAttrs (m.maxTokens != null) { maxTokens = m.maxTokens; }
-    // lib.optionalAttrs (m.reasoning != null) { reasoning = m.reasoning; };
+    // lib.optionalAttrs (m.reasoning != null) { reasoning = m.reasoning; }
+    // lib.optionalAttrs (m.samplingParams != { }) { samplingParams = m.samplingParams; };
 
+  hasModels = cfg.models != [ ];
+  # Plain store path (no lib.mkIf): it is interpolated into the activation
+  # script, which must contain a forced string, and the optionalString
+  # guards below decide whether the line appears. Building the store file
+  # unconditionally is harmless (a few bytes of JSON).
   modelsJson = pkgs.writeText "pi-models.json" (builtins.toJSON {
     "$schema" = "https://pi.dev/schemas/models.schema.json";
     providers.${cfg.provider} = {
@@ -38,10 +55,36 @@ let
       models = map modelToJson cfg.models;
     };
   });
+
+  # mcp.json, one entry per server. Optional fields follow pi's mcp.json
+  # schema (docs/mcp.md): stdio servers use command/args/env/cwd, HTTP
+  # servers use url/headers. Unset fields are omitted so pi applies its
+  # own defaults (e.g. enabled, timeout = 60).
+  serverToJson = s: { }
+    // lib.optionalAttrs (s.command != null) (
+      { command = s.command; args = s.args; }
+      // lib.optionalAttrs (s.env != { }) { env = s.env; }
+      // lib.optionalAttrs (s.cwd != null) { cwd = s.cwd; }
+    )
+    // lib.optionalAttrs (s.url != null) (
+      { url = s.url; }
+      // lib.optionalAttrs (s.headers != { }) { headers = s.headers; }
+    )
+    // lib.optionalAttrs (s.description != null) { description = s.description; }
+    // lib.optionalAttrs (!s.enabled) { enabled = s.enabled; }
+    // lib.optionalAttrs (s.timeout != null) { timeout = s.timeout; }
+    // lib.optionalAttrs (s.type != null) { type = s.type; }
+    // lib.optionalAttrs (s.exposure != null) { exposure = s.exposure; }
+    // lib.optionalAttrs (s.toolExposure != null) { toolExposure = s.toolExposure; };
+
+  hasMcp = cfg.mcpServers != { };
+  mcpJson = pkgs.writeText "pi-mcp.json" (builtins.toJSON {
+    mcpServers = lib.mapAttrs (name: server: serverToJson server) cfg.mcpServers;
+  });
 in
 {
   options.pi.agent = {
-    enable = lib.mkEnableOption "a pi models.json pointing at a custom model endpoint";
+    enable = lib.mkEnableOption "pi agent config (models.json and/or mcp.json) installed into the user's pi agent directory";
 
     user = lib.mkOption {
       type = lib.types.str;
@@ -103,13 +146,102 @@ in
             default = null;
             description = "Optional reasoning flag (pi defaults to false).";
           };
+          samplingParams = lib.mkOption {
+            type = lib.types.attrsOf samplingValue;
+            default = { };
+            description = "Optional sampling params merged into every request body (pi: samplingParams, OpenAI-compatible APIs). E.g. { reasoning_effort = \"low\"; }.";
+          };
         };
       });
       default = [ ];
       example = [
         { id = "qwen3-coder:30b"; contextWindow = 65536; maxTokens = 32000; }
+        { id = "qwen3.8:27b-128k"; contextWindow = 131072; samplingParams.reasoning_effort = "low"; }
       ];
       description = "Models the endpoint exposes. Entries not set are omitted (pi applies schema defaults).";
+    };
+
+    # User-level MCP servers -> ~/.pi/agent/mcp.json (pi docs/mcp.md).
+    # Map: server name -> server config. Names may contain only letters,
+    # digits, _ and -; each server needs a command (stdio) or a url (http).
+    mcpServers = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule {
+        options = {
+          command = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Executable of a stdio server (one program, not a shell string). Mutually exclusive with url.";
+          };
+          args = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Arguments of a stdio server.";
+          };
+          env = lib.mkOption {
+            type = lib.types.attrsOf lib.types.str;
+            default = { };
+            description = "Env vars for a stdio server. Values may use \${NAME} interpolation or !command.";
+          };
+          cwd = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Working directory of a stdio server; ~/... and relative paths resolve as pi documents.";
+          };
+          url = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Streamable-HTTP endpoint of a remote server. Mutually exclusive with command.";
+          };
+          headers = lib.mkOption {
+            type = lib.types.attrsOf lib.types.str;
+            default = { };
+            description = "HTTP headers, e.g. { Authorization = \"Bearer \${TOKEN}\"; }. \${NAME} and !command allowed.";
+          };
+          description = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "One-sentence summary of what the server offers (shown in the system prompt).";
+          };
+          enabled = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = "Keep the entry but do not connect (pi's enabled: false).";
+          };
+          timeout = lib.mkOption {
+            type = lib.types.nullOr lib.types.int;
+            default = null;
+            description = "Per-request timeout in seconds (pi defaults to 60).";
+          };
+          type = lib.mkOption {
+            type = lib.types.nullOr (lib.types.enum [ "stdio" "http" "streamable-http" ]);
+            default = null;
+            description = "Optional transport; pi infers stdio from command, http from url.";
+          };
+          exposure = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "How the server's tools reach the model (pi docs/mcp.md, tool exposure).";
+          };
+          toolExposure = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Per-tool exposure. Omitted; see pi docs/mcp.md for the expected shape.";
+          };
+        };
+      });
+      default = { };
+      example = {
+        filesystem = {
+          command = "npx";
+          args = [ "-y" "@modelcontextprotocol/server-filesystem" "." ];
+          description = "Read and write files on this machine";
+        };
+        docs = {
+          url = "https://example.com/mcp";
+          headers = { Authorization = "Bearer \${DOCS_TOKEN}"; };
+        };
+      };
+      description = "User-level MCP servers (pi docs/mcp.md), written to the user's ~/.pi/agent/mcp.json.";
     };
   };
 
@@ -119,15 +251,34 @@ in
         assertion = cfg.user != "" && config.users.users ? ${cfg.user};
         message = "pi.agent.user must name an existing users.users entry (got '${cfg.user}')";
       }
+      {
+        assertion = lib.all (name: builtins.match "[a-zA-Z0-9_-]+" name != null)
+          (builtins.attrNames cfg.mcpServers);
+        message = "pi.agent.mcpServers: server names may contain only letters, digits, _ and -";
+      }
+      {
+        assertion = lib.all (s: s.command != null || s.url != null)
+          (lib.mapAttrsToList (_: s: s) cfg.mcpServers);
+        message = "pi.agent.mcpServers: each server needs a command (stdio) or a url (http)";
+      }
     ];
 
-    # models.json must live in the user's agent directory; symlink + chown it
-    # during activation (the same pattern used for other per-home agent config).
+    # Both files must live in the user's agent directory; symlink + chown
+    # during activation (the same pattern used for other per-home agent
+    # config). Each file is only touched if its data is actually configured.
     system.activationScripts.piAgent = ''
-      mkdir -p "${home}/.pi/agent"
-      chown ${cfg.user} "${home}/.pi/agent"
-      ln -sf ${modelsJson} "${home}/.pi/agent/models.json"
-      chown -h ${cfg.user} "${home}/.pi/agent/models.json"
+      ${lib.optionalString (hasModels || hasMcp) ''
+        mkdir -p "${home}/.pi/agent"
+        chown ${cfg.user} "${home}/.pi/agent"
+      ''}
+      ${lib.optionalString hasModels ''
+        ln -sf ${modelsJson} "${home}/.pi/agent/models.json"
+        chown -h ${cfg.user} "${home}/.pi/agent/models.json"
+      ''}
+      ${lib.optionalString hasMcp ''
+        ln -sf ${mcpJson} "${home}/.pi/agent/mcp.json"
+        chown -h ${cfg.user} "${home}/.pi/agent/mcp.json"
+      ''}
     '';
   };
 }
